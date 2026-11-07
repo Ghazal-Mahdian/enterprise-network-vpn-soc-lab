@@ -113,10 +113,6 @@ The lab could only partly reproduce the scenario. The suspect address 192.168.10
 - Phase 1 and Phase 2 failures look different: a PSK mismatch stops ISAKMP, while a NAT overlap shows up as an SA with zero encapsulated packets (Part A, p. 4).
 - A site-to-site VPN that permits every subnet pair extends the attack surface between sites. Encryption protects confidentiality in transit, not access control (Part B, pp. 7–8).
 
-**Suggested reflections — for your review before publishing (not from your reports):**
-- Exporting `show running-config` from each device alongside screenshots would have made the configuration reviewable without Packet Tracer.
-- When a scenario uses addresses that are not in the lab (192.168.10.45), stating explicitly which lab host stands in for it keeps the evidence chain honest.
-- First-ping loss across a new tunnel is common in Packet Tracer while ARP and IKE complete; re-running the ping and capturing both results shows this.
 
 ## Reviewing this repository
 
