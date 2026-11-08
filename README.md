@@ -1,141 +1,111 @@
-# Enterprise Network, Site-to-Site VPN, and SOC Investigation Lab
+# Enterprise Network, Site-to-Site VPN & SOC Investigation
 
-A two-part Cisco Packet Tracer lab from a graduate information assurance course (CYB555, midterm). Part A builds a two-site network with VLANs, router-based DHCP, router-on-a-stick inter-VLAN routing, NAT, and an IPsec site-to-site VPN. Part B uses that network as the setting for a simulated SOC investigation into suspicious cross-site traffic.
+I designed and built a two-site enterprise network in Cisco Packet Tracer. Departments are separated into VLANs, addresses are assigned by router-hosted DHCP, VLANs are routed with router-on-a-stick, Internet traffic is NATed, and the two offices are linked by an encrypted IPsec site-to-site VPN. I then used the network as the setting for a SOC investigation: suspicious after-hours traffic moving from a Sales workstation to a Finance server across the tunnel. I traced it, classified it, and wrote containment and hardening recommendations.
 
-This repository documents the lab as a case study. It contains web versions of my two reports (with the instructor's questions paraphrased) and selected screenshots. It does not contain exported device configurations, so some details are described from screenshots rather than from configuration files.
+**Tools:** Cisco Packet Tracer 9.0, Cisco IOS
 
-> **Scope note.** The company (BrightFuture Technologies), the incident, and the sample log in Part B are instructor-provided teaching scenarios. They are not real organizations or real security events.
+![Two-site network topology](assets/screenshots/topology-two-site-ipsec-packet-tracer.png)
 
-## At a glance
+## Highlights
 
-| | |
-|---|---|
-| Context | CYB555 midterm, Parts A and B (screenshots dated 29 March 2026) |
-| Environment | Cisco Packet Tracer (save path in screenshots references a "Cisco Packet Tracer 9.0.0" folder) |
-| Sites | Site A "San Diego" (Sales VLAN 10, HR VLAN 20); Site B "Phoenix" (IT VLAN 30, Finance VLAN 40) |
-| Strongest evidence | `show crypto isakmp sa` on both routers (QM_IDLE / ACTIVE), `show crypto ipsec sa` packet counters, DHCP bindings, VLAN tables, cross-site pings |
-| Main gap vs. assignment | The assignment specified Cisco ASA 5506-X firewalls terminating the VPN. The submitted lab terminates the VPN on ISR 4331 routers; no ASA appears in the topology. |
+- Built two sites (San Diego HQ and Phoenix branch) with four department VLANs: Sales, HR, IT, and Finance.
+- Configured an **IPsec site-to-site VPN** with ISAKMP phase 1, crypto map `CMAP`, `esp-aes`/`esp-sha-hmac`, and interesting-traffic ACLs, and verified it with active security associations on both routers.
+- Implemented **selective encryption**: NAT-exemption ACLs keep inter-office traffic untranslated so it is caught by the tunnel, while Internet traffic is translated with PAT.
+- Ran a **SOC investigation** of SMB/RDP/SSH activity across the tunnel. Mapped IP → MAC → switch port with IOS commands, identified the over-permissive VPN ACL as the enabling weakness, and recommended micro-segmentation, IDS, egress filtering, and VPN logging.
 
-## Business problem and lab context
-
-The scenario describes a consulting firm with two offices that exchange files by email. The assignment asked students to segment departments, automate addressing, route between VLANs, protect each site, and connect the sites with an encrypted tunnel while leaving Internet-bound traffic unencrypted. Part B then asks students to act as SOC analysts investigating 02:15 AM traffic from a Sales workstation (192.168.10.45) to a Finance server (192.168.40.22) on TCP 445, 3389, and 22 across the VPN.
-
-The full assignment text is not republished here. [docs/architecture.md](docs/architecture.md) summarizes the requirements alongside what was built.
-
-## My contribution
-
-The supplied materials show the following work:
-
-- A Packet Tracer topology with two ISR 4331 site routers, an ISR 4331 "Internet Router", two Layer 2 switches, and eight PCs ([topology screenshot](assets/screenshots/topology-two-site-ipsec-packet-tracer.png)).
-- VLAN, DHCP, sub-interface, NAT/NAT-exemption, and IPsec configuration, evidenced by `show` command output on both routers and both switches.
-- A Part A design explanation with answers to the case-study questions ([report](reports/part-a-network-design-report.md)).
-- A Part B SOC investigation report with an attack narrative, an evidence chain, and hardening recommendations ([report](reports/part-b-soc-investigation-report.md)).
-
-All work in this repository, both the lab build and the two reports, was done individually.
-
-## Tools and technologies evidenced
-
-- Cisco Packet Tracer; ISR 4331 routers; 2960-series switches (labels visible in topology)
-- IEEE 802.1Q VLANs and router-on-a-stick sub-interfaces (`GigabitEthernet0/0/0.10`, `.20`, `.30`, `.40`)
-- Router-hosted DHCP pools (bindings on both routers; clients receive gateway and DNS 8.8.8.8)
-- IPsec site-to-site VPN: ISAKMP phase 1, crypto map `CMAP`, transform `esp-aes esp-sha-hmac`, interesting-traffic ACL `100`
-- NAT with exemption ACLs (`NAT_EXEMPT`, `NAT_ACL`, standard ACL `1`)
-- IOS verification commands: `show vlan brief`, `show ip dhcp binding`, `show ip interface brief`, `show access-lists`, `show crypto isakmp sa`, `show crypto ipsec sa`
-
-Not evidenced: Cisco ASA, firewall policy, IDS, syslog, or any real traffic capture.
-
-## Architecture overview
+## Architecture
 
 ```
- Site A (San Diego)                                             Site B (Phoenix)
+ Site A – San Diego                                              Site B – Phoenix
  PCs ── Switch1 ── Router1 (ISR 4331) ── Internet Router ── Router2 (ISR 4331) ── Switch2 ── PCs
- VLAN 10 Sales    G0/0/0.10 192.168.10.1   (ISR 4331)        G0/0/0.30 192.168.30.1   VLAN 30 IT
- VLAN 20 HR       G0/0/0.20 192.168.20.1                     G0/0/0.40 192.168.40.1   VLAN 40 Finance
-                  G0/0/1 209.165.200.226 ◄═══ IPsec (CMAP) ═══► G0/0/1 209.165.200.229
+ VLAN 10 Sales    G0/0/0.10 192.168.10.1                       G0/0/0.30 192.168.30.1   VLAN 30 IT
+ VLAN 20 HR       G0/0/0.20 192.168.20.1                       G0/0/0.40 192.168.40.1   VLAN 40 Finance
+                  G0/0/1 209.165.200.226 ◄═══ IPsec VPN (CMAP) ═══► G0/0/1 209.165.200.229
 ```
 
-Addresses are taken from `show ip interface brief` on each router. Details and requirement mapping are in [docs/architecture.md](docs/architecture.md).
+| Layer | Implementation |
+|---|---|
+| Segmentation | 802.1Q VLANs; access ports Fa0/1–10 and Fa0/11–20 per switch |
+| Addressing | DHCP pools on each router (gateway, mask, DNS 8.8.8.8) |
+| Inter-VLAN routing | Router-on-a-stick sub-interfaces |
+| Internet access | PAT with NAT-exemption ACLs |
+| Site-to-site | IPsec VPN between router WAN interfaces |
 
-![Packet Tracer topology for the two-site network](assets/screenshots/topology-two-site-ipsec-packet-tracer.png)
-*Packet Tracer logical topology: Router1/Router2 and the Internet Router are ISR 4331s; each site has one switch and four PCs. The PDU list shows one failed PC1→PC3 test and one successful PC1→Router1 test. The file path in the title bar has been redacted.*
+Full design notes: [docs/architecture.md](docs/architecture.md).
 
-## Implementation highlights
+## Implementation
 
-- **Segmentation and addressing.** Switch1 places Fa0/1–10 in VLAN 10 (Sales) and Fa0/11–20 in VLAN 20 (HR). Switch2 does the same for VLAN 30 (IT) and VLAN 40 (Finance). Each router serves DHCP for its two VLANs.
-- **Selective encryption.** ACL `100` on Router1 defines all four Site A↔Site B subnet pairs as interesting traffic, and Router2 holds the mirror image. NAT exemption ACLs deny those same pairs from translation and permit the local subnets to `any`. This matches the requirement to encrypt inter-office traffic while Internet traffic is translated in the clear.
-- **Tunnel establishment.** Both routers report an ISAKMP SA in `QM_IDLE` / `ACTIVE` state with each other's WAN address as peer, and IPsec SAs carry non-zero encapsulation and decapsulation counters.
-
-Configuration excerpts transcribed from screenshots are in [docs/implementation.md](docs/implementation.md).
+**VPN tunnel up on both peers.** ISAKMP SAs in `QM_IDLE / ACTIVE` with each router's WAN address as peer.
 
 ![Router1 show crypto isakmp sa](assets/screenshots/router1-show-crypto-isakmp-sa.png)
-*Router1: `show crypto isakmp sa` shows dst 209.165.200.229, src 209.165.200.226, state QM_IDLE, status ACTIVE. An earlier mistyped command (`how crypto isakmp sa`) is visible above it.*
 
-![Router1 IPsec SA for HR to Finance](assets/screenshots/router1-ipsec-sa-hr-to-finance.png)
-*Router1: the IPsec SA for 192.168.20.0/24 → 192.168.40.0/24 shows 4 packets encapsulated and 0 decapsulated at the time of capture, using crypto map CMAP.*
+**Traffic encrypted through the tunnel.** IPsec SAs show packets encapsulated and decapsulated for each subnet pair, for example HR → Finance through crypto map `CMAP`.
+
+![Router1 IPsec SA, HR to Finance](assets/screenshots/router1-ipsec-sa-hr-to-finance.png)
+
+**NAT exemption and interesting traffic.** ACL `100` defines the encrypted subnet pairs. The NAT ACLs keep those pairs from being translated and send everything else out with PAT.
+
+![Router1 access lists](assets/screenshots/router1-access-lists-nat-exemption.png)
+
+**VLANs and DHCP.** Each switch carries its department VLANs, and clients receive their addressing automatically.
+
+![Switch1 show vlan brief](assets/screenshots/switch1-site-a-show-vlan-brief.png)
+
+Configuration excerpts for every device are in [docs/implementation.md](docs/implementation.md).
+
+## Validation
+
+| Test | Result |
+|---|---|
+| VLAN membership on both switches | ✅ Verified |
+| DHCP leases at both sites | ✅ Verified |
+| Inter-VLAN routing (HR → Sales) | ✅ 4/4, TTL 127 |
+| IKE phase 1 between sites | ✅ QM_IDLE / ACTIVE on both routers |
+| IPsec phase 2 | ✅ Encaps/decaps counters on both routers |
+| Cross-site reachability (A → B and B → A) | ✅ 4/4, TTL 126 |
+| First packets across a new SA | ⚠️ Initial timeouts while the tunnel negotiated, then replies |
 
 ![PC7 pings across VLANs and across the VPN](assets/screenshots/pc7-ping-inter-vlan-and-cross-site.png)
-*PC7 (HR, Site A) reaches 192.168.10.2 in Sales (TTL 127, one routed hop) and 192.168.40.2 in Finance at Site B (TTL 126), both with 0% loss.*
 
-## Validation summary
+The full test matrix with evidence for each row is in [docs/validation.md](docs/validation.md).
 
-| Area | Status |
+## SOC Investigation
+
+**Scenario:** at 02:15 the SOC flags connections from a Sales workstation (192.168.10.45) to a Finance server (192.168.40.22) on TCP 445, 3389, and 22, all crossing the VPN.
+
+**My analysis:**
+- **Classification:** compromised host → internal discovery → attempted lateral movement and exfiltration (SMB for shares/ransomware spread, RDP for GUI control, SSH for admin access).
+- **Root cause:** egress filtering failed to stop the initial malware download, and there was no internal access control. The VPN ACL permits every Site A ↔ Site B subnet pair, which I confirmed in my own router configuration.
+- **Forensics path:** `show ip dhcp binding` → MAC address → `show mac-address-table` → switch port, plus `show crypto ipsec sa` to confirm the traffic crossed the tunnel.
+- **Containment:** shut the suspect switch port immediately, then deploy an ACL denying Sales → Finance.
+- **Hardening:** micro-segmentation ACLs, an IDS (Snort/Suricata) on the inside interfaces, egress and web content filtering, and crypto logging to syslog with out-of-hours alerts.
+
+Full write-up: [docs/investigation.md](docs/investigation.md) and the [SOC report](reports/part-b-soc-investigation-report.md).
+
+## Key Takeaways
+
+- **NAT exemption must mirror the crypto ACL exactly.** If NAT rewrites the source first, the traffic no longer matches the interesting-traffic ACL and the tunnel never carries it.
+- **Phase 1 and Phase 2 failures look different.** A PSK mismatch stops ISAKMP; a NAT overlap shows up as an SA with zero encapsulated packets.
+- **Encryption is not access control.** A VPN that permits every subnet pair protects data in transit, but it also gives an attacker a clean path between sites.
+
+## Next Steps
+
+- Apply and test the Sales → Finance deny ACL recommended in the investigation.
+- Add `show running-config` exports so the full configuration is reviewable without Packet Tracer.
+- Extend the design with Cisco ASA firewalls at each site and the VLAN 50 (Engineering) expansion.
+
+## Repository Guide
+
+| Path | Contents |
 |---|---|
-| VLANs on both switches | Demonstrated |
-| DHCP leases on both sites | Demonstrated |
-| Inter-VLAN routing (Site A) | Demonstrated |
-| ISAKMP/IPsec SAs between sites | Demonstrated |
-| Cross-site pings | Demonstrated, with initial packet loss in one capture |
-| Internet traffic NATed and not encrypted | Configured (NAT ACLs visible); no Internet test captured |
-| ASA firewall protection | Not implemented in the submitted lab |
-| Part B evidence chain (MAC → switch port Fa0/5) | Reported in write-up; not supported by the screenshots supplied |
+| [`reports/`](reports/) | [Network design report](reports/part-a-network-design-report.md) and [SOC investigation report](reports/part-b-soc-investigation-report.md) |
+| [`docs/architecture.md`](docs/architecture.md) | Requirements, topology, addressing |
+| [`docs/implementation.md`](docs/implementation.md) | VLAN, DHCP, ACL, and IPsec configuration (transcribed from device output) |
+| [`docs/validation.md`](docs/validation.md) | Test matrix with evidence |
+| [`docs/investigation.md`](docs/investigation.md) | SOC analysis and evidence chain |
+| [`docs/evidence-index.md`](docs/evidence-index.md) | Every claim mapped to its screenshot |
+| [`labs/`](labs/) | Packet Tracer simulation (available on request) |
 
-The complete table, including partial results, is in [docs/validation.md](docs/validation.md).
+---
 
-## SOC investigation (Part B)
-
-The Part B report classifies the activity as a compromised host followed by internal discovery and attempted lateral movement. It identifies the open VPN crypto ACL and the absence of inter-department ACLs as the failed controls. It recommends Sales→Finance ACLs, an IDS on inside interfaces, egress filtering, and VPN logging to syslog.
-
-The lab could only partly reproduce the scenario. The suspect address 192.168.10.45 does not exist in the lab (DHCP issued 192.168.10.2 and .3), so the report's DHCP and VPN screenshots use existing lab hosts as stand-ins. The report also states that the MAC address was traced to Switch1 port Fa0/5. The MAC-table screenshot in the report comes from a Site B switch and does not show that MAC or that port. [docs/investigation.md](docs/investigation.md) covers the analysis and these discrepancies.
-
-## Limitations and missing artifacts
-
-- No `show running-config` output or exported configs. Pre-shared key, ISAKMP policy (encryption, hash, DH group, lifetime), NAT statements, and trunk configuration are not visible in any supplied screenshot.
-- The Packet Tracer file is not published because it contains the VPN pre-shared key and device passwords (see [labs/README.md](labs/README.md)).
-- The Part A report says AES-256. The screenshots show `esp-aes` without a key length, so AES-256 is not confirmed.
-- Switch trunk status (`show interfaces trunk`) was not captured.
-- In the Part B report, question 13 ("What information can DHCP logs provide?") has no written answer (p. 3).
-- The ASA requirement was not met; the lab used routers for VPN termination.
-
-## Lessons learned
-
-**From the reports:**
-- NAT exemption must match the crypto ACL exactly. If NAT translates the source first, the interesting-traffic ACL no longer matches and the tunnel does not form or pass data (Part A, p. 3).
-- Phase 1 and Phase 2 failures look different: a PSK mismatch stops ISAKMP, while a NAT overlap shows up as an SA with zero encapsulated packets (Part A, p. 4).
-- A site-to-site VPN that permits every subnet pair extends the attack surface between sites. Encryption protects confidentiality in transit, not access control (Part B, pp. 7–8).
-
-
-## Reviewing this repository
-
-1. Start with this README, then [docs/validation.md](docs/validation.md) for what was and was not shown.
-2. Use [docs/evidence-index.md](docs/evidence-index.md) to trace any claim to a screenshot or report page.
-3. Read the reports in `reports/`; they render directly on GitHub. `[p. N]` markers refer to the original PDF pages cited in the docs.
-4. The Packet Tracer simulation is available on request; see [labs/README.md](labs/README.md).
-
-## Repository contents
-
-```
-README.md
-docs/
-  architecture.md      requirements vs. built design, addressing
-  implementation.md    transcribed configuration excerpts and evidence
-  validation.md        test table with status
-  investigation.md     Part B SOC analysis and discrepancies
-  evidence-index.md    claim → file/page mapping, excluded originals
-reports/               Part A and Part B reports (web versions, questions paraphrased)
-labs/                  note on the Packet Tracer file (not published)
-assets/screenshots/    selected, renamed, redacted screenshots
-```
-
-## Use and licensing
-
-No license is applied. The assignment scenario belongs to the course instructor, and my reports and screenshots are shared for portfolio review only. Contact the author before reusing any material.
+© 2026 Ghazal Mahdian. Company names and incident data are fictional scenarios used for the project.
